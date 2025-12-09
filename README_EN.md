@@ -52,10 +52,10 @@ Why "Roubao" (肉包, meaning "meat bun")? Because the author doesn't like veget
 |---------|--------|--------------|-------------------|
 | Requires PC | ❌ No | ❌ No | ✅ Most do |
 | Requires Hardware | ❌ No | ✅ $480+ | ❌ No |
-| Native Android | ✅ Kotlin | ❓ Unknown | ❌ Python |
+| Native Android | ✅ Kotlin | ✅ Native | ❌ Python |
 | Open Source | ✅ MIT | ❌ Closed | ✅ Yes |
 | Skills/Tools Architecture | ✅ Full | ❓ Unknown | ❌ No |
-| UI Design | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐ |
+| UI Design | ⭐⭐⭐½ | ⭐⭐⭐⭐ | ⭐⭐ |
 | Custom Models | ✅ Yes | ❌ Doubao only | ✅ Partial |
 
 ### What Problem Do We Solve?
