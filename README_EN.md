@@ -19,6 +19,13 @@
   <img src="https://img.shields.io/badge/Language-Kotlin-purple.svg" alt="Language">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/1.jpg" width="180" alt="Home">
+  <img src="docs/screenshots/3.jpg" width="180" alt="Capabilities">
+  <img src="docs/screenshots/2.jpg" width="180" alt="History">
+  <img src="docs/screenshots/4.jpg" width="180" alt="Settings">
+</p>
+
 ---
 
 ## Background
