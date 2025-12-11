@@ -36,6 +36,54 @@ class VLMClient(
     companion object {
         private const val MAX_RETRIES = 3
         private const val RETRY_DELAY_MS = 1000L
+
+        /**
+         * 从 API 获取可用模型列表
+         * @param baseUrl API 基础地址
+         * @param apiKey API 密钥
+         * @return 模型 ID 列表
+         */
+        suspend fun fetchModels(baseUrl: String, apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .build()
+
+            // 清理 URL，确保正确拼接
+            val cleanBaseUrl = baseUrl.removeSuffix("/chat/completions").removeSuffix("/")
+
+            val request = Request.Builder()
+                .url("$cleanBaseUrl/models")
+                .addHeader("Authorization", "Bearer $apiKey")
+                .get()
+                .build()
+
+            try {
+                client.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string() ?: ""
+
+                    if (response.isSuccessful) {
+                        val json = JSONObject(responseBody)
+                        val data = json.optJSONArray("data") ?: JSONArray()
+                        val models = mutableListOf<String>()
+                        for (i in 0 until data.length()) {
+                            val item = data.optJSONObject(i)
+                            if (item != null) {
+                                val id = item.optString("id", "").trim()
+                                if (id.isNotEmpty()) {
+                                    models.add(id)
+                                }
+                            }
+                        }
+                        Result.success(models)
+                    } else {
+                        Result.failure(Exception("HTTP ${response.code}: $responseBody"))
+                    }
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
     }
 
     /**

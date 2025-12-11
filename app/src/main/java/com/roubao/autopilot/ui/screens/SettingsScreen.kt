@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Star
@@ -37,6 +38,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
+import com.google.firebase.crashlytics.FirebaseCrashlytics
+import com.roubao.autopilot.BuildConfig
 import com.roubao.autopilot.data.ApiProvider
 import com.roubao.autopilot.data.AppSettings
 import com.roubao.autopilot.ui.theme.BaoziTheme
@@ -49,17 +52,16 @@ fun SettingsScreen(
     onUpdateApiKey: (String) -> Unit,
     onUpdateBaseUrl: (String) -> Unit,
     onUpdateModel: (String) -> Unit,
-    onAddCustomModel: (String) -> Unit,
-    onRemoveCustomModel: (String) -> Unit,
+    onUpdateCachedModels: (List<String>) -> Unit,
     onUpdateThemeMode: (ThemeMode) -> Unit,
     onUpdateMaxSteps: (Int) -> Unit,
-    allModels: List<String>,
-    shizukuAvailable: Boolean
+    onUpdateCloudCrashReport: (Boolean) -> Unit,
+    shizukuAvailable: Boolean,
+    onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null
 ) {
     val colors = BaoziTheme.colors
     var showApiKeyDialog by remember { mutableStateOf(false) }
     var showModelDialog by remember { mutableStateOf(false) }
-    var showAddModelDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
     var showMaxStepsDialog by remember { mutableStateOf(false) }
     var showBaseUrlDialog by remember { mutableStateOf(false) }
@@ -148,16 +150,6 @@ fun SettingsScreen(
             )
         }
 
-        // 模型设置
-        item {
-            SettingsItem(
-                icon = Icons.Default.Build,
-                title = "模型",
-                subtitle = settings.model,
-                onClick = { showModelDialog = true }
-            )
-        }
-
         // API Key 设置
         item {
             SettingsItem(
@@ -168,35 +160,77 @@ fun SettingsScreen(
             )
         }
 
-        // 自定义模型管理
-        item {
-            SettingsSection(title = "自定义模型")
-        }
-
+        // 模型设置
         item {
             SettingsItem(
-                icon = Icons.Default.Add,
-                title = "添加自定义模型",
-                subtitle = "添加其他支持的模型",
-                onClick = { showAddModelDialog = true }
+                icon = Icons.Default.Build,
+                title = "模型",
+                subtitle = settings.model,
+                onClick = { showModelDialog = true }
             )
-        }
-
-        // 显示已添加的自定义模型
-        settings.customModels.forEach { model ->
-            item {
-                CustomModelItem(
-                    model = model,
-                    isSelected = model == settings.model,
-                    onSelect = { onUpdateModel(model) },
-                    onDelete = { onRemoveCustomModel(model) }
-                )
-            }
         }
 
         // 反馈分组
         item {
             SettingsSection(title = "反馈与调试")
+        }
+
+        // 云端崩溃上报开关
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.backgroundCard)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colors.primary.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = colors.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "云端崩溃上报",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = if (settings.cloudCrashReportEnabled) "已开启，帮助我们改进应用" else "已关闭",
+                            fontSize = 13.sp,
+                            color = colors.textSecondary,
+                            maxLines = 1
+                        )
+                    }
+                    Switch(
+                        checked = settings.cloudCrashReportEnabled,
+                        onCheckedChange = { onUpdateCloudCrashReport(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = colors.primary,
+                            checkedTrackColor = colors.primary.copy(alpha = 0.5f),
+                            uncheckedThumbColor = colors.textHint,
+                            uncheckedTrackColor = colors.backgroundInput
+                        )
+                    )
+                }
+            }
         }
 
         item {
@@ -277,11 +311,48 @@ fun SettingsScreen(
         }
 
         item {
+            val context = LocalContext.current
+            var clickCount by remember { mutableStateOf(0) }
+            var lastClickTime by remember { mutableStateOf(0L) }
+
             SettingsItem(
                 icon = Icons.Default.Info,
                 title = "版本",
-                subtitle = "1.0.0",
-                onClick = { }
+                subtitle = BuildConfig.VERSION_NAME,
+                onClick = {
+                    val currentTime = System.currentTimeMillis()
+                    // 如果两次点击间隔超过 2 秒，重置计数
+                    if (currentTime - lastClickTime > 2000) {
+                        clickCount = 1
+                    } else {
+                        clickCount++
+                    }
+                    lastClickTime = currentTime
+
+                    when (clickCount) {
+                        3 -> {
+                            // 先发送一个非致命错误验证连接
+                            FirebaseCrashlytics.getInstance().apply {
+                                log("用户点击版本号 3 次 - 发送测试事件")
+                                recordException(Exception("测试非致命错误 - Crashlytics Connection Test"))
+                            }
+                            android.widget.Toast.makeText(context, "已发送测试事件到 Firebase", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        5 -> {
+                            android.widget.Toast.makeText(context, "再点 2 次触发测试崩溃", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        6 -> {
+                            android.widget.Toast.makeText(context, "再点 1 次触发测试崩溃", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        7 -> {
+                            clickCount = 0
+                            // 记录测试日志
+                            FirebaseCrashlytics.getInstance().log("用户触发测试崩溃")
+                            // 触发测试崩溃
+                            throw RuntimeException("测试崩溃 - Crashlytics Test")
+                        }
+                    }
+                }
             )
         }
 
@@ -336,27 +407,19 @@ fun SettingsScreen(
         )
     }
 
-    // 模型选择对话框
+    // 模型选择对话框（合并了自定义输入和从 API 获取）
     if (showModelDialog) {
-        ModelSelectDialog(
+        ModelSelectDialogWithFetch(
             currentModel = settings.model,
-            models = allModels,
+            cachedModels = settings.cachedModels,
+            hasApiKey = settings.apiKey.isNotEmpty(),
             onDismiss = { showModelDialog = false },
             onSelect = {
                 onUpdateModel(it)
                 showModelDialog = false
-            }
-        )
-    }
-
-    // 添加自定义模型对话框
-    if (showAddModelDialog) {
-        AddModelDialog(
-            onDismiss = { showAddModelDialog = false },
-            onConfirm = {
-                onAddCustomModel(it)
-                showAddModelDialog = false
-            }
+            },
+            onFetchModels = onFetchModels,
+            onUpdateCachedModels = onUpdateCachedModels
         )
     }
 
@@ -504,65 +567,6 @@ fun SettingsItem(
 }
 
 
-@Composable
-fun CustomModelItem(
-    model: String,
-    isSelected: Boolean,
-    onSelect: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val colors = BaoziTheme.colors
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable(onClick = onSelect),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) colors.primary.copy(alpha = 0.15f) else colors.backgroundCard
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = colors.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(20.dp)
-                        .border(2.dp, colors.textHint, CircleShape)
-                )
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = model,
-                fontSize = 14.sp,
-                color = if (isSelected) colors.primary else colors.textPrimary,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "删除",
-                    tint = colors.textHint,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
 
 @Composable
 fun ThemeSelectDialog(
@@ -701,14 +705,35 @@ fun ApiKeyDialog(
     )
 }
 
+
+/**
+ * 模型选择对话框（合并了自定义输入和从 API 获取）
+ */
 @Composable
-fun ModelSelectDialog(
+fun ModelSelectDialogWithFetch(
     currentModel: String,
-    models: List<String>,
+    cachedModels: List<String>,
+    hasApiKey: Boolean,
     onDismiss: () -> Unit,
-    onSelect: (String) -> Unit
+    onSelect: (String) -> Unit,
+    onFetchModels: ((onSuccess: (List<String>) -> Unit, onError: (String) -> Unit) -> Unit)? = null,
+    onUpdateCachedModels: (List<String>) -> Unit
 ) {
     val colors = BaoziTheme.colors
+    val context = LocalContext.current
+    var customModel by remember { mutableStateOf("") }
+    var searchQuery by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+
+    // 过滤后的模型列表
+    val filteredModels = remember(cachedModels, searchQuery) {
+        if (searchQuery.isBlank()) {
+            cachedModels
+        } else {
+            cachedModels.filter { it.contains(searchQuery, ignoreCase = true) }
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = colors.backgroundCard,
@@ -716,41 +741,259 @@ fun ModelSelectDialog(
             Text("选择模型", color = colors.textPrimary)
         },
         text = {
-            Column {
-                models.forEach { model ->
-                    val isSelected = model == currentModel
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                // 自定义模型输入
+                Text(
+                    text = "自定义模型",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.textHint,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.backgroundInput)
+                            .padding(horizontal = 12.dp, vertical = 12.dp)
+                    ) {
+                        if (customModel.isEmpty()) {
+                            Text(
+                                text = "输入模型名称，如 gpt-4o",
+                                color = colors.textHint,
+                                fontSize = 14.sp
+                            )
+                        }
+                        BasicTextField(
+                            value = customModel,
+                            onValueChange = { customModel = it },
+                            textStyle = TextStyle(
+                                color = colors.textPrimary,
+                                fontSize = 14.sp
+                            ),
+                            cursorBrush = SolidColor(colors.primary),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // 确认按钮
                     Surface(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { onSelect(model) },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (isSelected) colors.primary.copy(alpha = 0.15f) else Color.Transparent
+                            .size(44.dp)
+                            .clickable(enabled = customModel.isNotBlank()) {
+                                onSelect(customModel.trim())
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (customModel.isNotBlank()) colors.primary else colors.backgroundInput
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = null,
-                                    tint = colors.primary,
-                                    modifier = Modifier.size(20.dp)
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "确认",
+                                tint = if (customModel.isNotBlank()) Color.White else colors.textHint,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 从 API 获取按钮
+                if (onFetchModels != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "可用模型${if (cachedModels.isNotEmpty()) " (${cachedModels.size})" else ""}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = colors.textHint
+                        )
+
+                        TextButton(
+                            onClick = {
+                                if (!hasApiKey) {
+                                    android.widget.Toast.makeText(context, "请先设置 API Key", android.widget.Toast.LENGTH_SHORT).show()
+                                    return@TextButton
+                                }
+                                isLoading = true
+                                onFetchModels(
+                                    { models ->
+                                        isLoading = false
+                                        onUpdateCachedModels(models)
+                                        android.widget.Toast.makeText(context, "获取到 ${models.size} 个模型", android.widget.Toast.LENGTH_SHORT).show()
+                                    },
+                                    { error ->
+                                        isLoading = false
+                                        android.widget.Toast.makeText(context, "获取失败: $error", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
                                 )
+                            },
+                            enabled = !isLoading
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = colors.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("获取中...", fontSize = 13.sp, color = colors.textHint)
                             } else {
-                                Box(
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .border(2.dp, colors.textHint, CircleShape)
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = colors.primary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("从 API 获取", fontSize = 13.sp, color = colors.primary)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // 搜索框（模型数量超过 10 个时显示）
+                    if (cachedModels.size > 10) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(colors.backgroundInput)
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = colors.textHint,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(modifier = Modifier.weight(1f)) {
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            text = "搜索模型...",
+                                            color = colors.textHint,
+                                            fontSize = 14.sp
+                                        )
+                                    }
+                                    BasicTextField(
+                                        value = searchQuery,
+                                        onValueChange = { searchQuery = it },
+                                        textStyle = TextStyle(
+                                            color = colors.textPrimary,
+                                            fontSize = 14.sp
+                                        ),
+                                        cursorBrush = SolidColor(colors.primary),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                }
+                                if (searchQuery.isNotEmpty()) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "清除",
+                                        tint = colors.textHint,
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .clickable { searchQuery = "" }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
+
+                // 模型列表
+                if (cachedModels.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (hasApiKey) "点击「从 API 获取」加载模型列表" else "请先设置 API Key",
+                            fontSize = 13.sp,
+                            color = colors.textHint
+                        )
+                    }
+                } else if (filteredModels.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "没有匹配「$searchQuery」的模型",
+                            fontSize = 13.sp,
+                            color = colors.textHint
+                        )
+                    }
+                } else {
+                    // 显示过滤结果数量
+                    if (searchQuery.isNotBlank()) {
+                        Text(
+                            text = "找到 ${filteredModels.size} 个模型",
+                            fontSize = 11.sp,
+                            color = colors.textHint,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+                    filteredModels.forEach { model ->
+                        val isSelected = model == currentModel
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                                .clickable { onSelect(model) },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) colors.primary.copy(alpha = 0.15f) else Color.Transparent
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = colors.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .border(2.dp, colors.textHint, CircleShape)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = model,
+                                    fontSize = 14.sp,
+                                    color = if (isSelected) colors.primary else colors.textPrimary
                                 )
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = model,
-                                fontSize = 14.sp,
-                                color = if (isSelected) colors.primary else colors.textPrimary
-                            )
                         }
                     }
                 }
@@ -759,71 +1002,6 @@ fun ModelSelectDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("关闭", color = colors.textSecondary)
-            }
-        }
-    )
-}
-
-@Composable
-fun AddModelDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val colors = BaoziTheme.colors
-    var modelName by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = colors.backgroundCard,
-        title = {
-            Text("添加自定义模型", color = colors.textPrimary)
-        },
-        text = {
-            Column {
-                Text(
-                    text = "输入模型名称或 ID",
-                    fontSize = 14.sp,
-                    color = colors.textSecondary,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(colors.backgroundInput)
-                        .padding(horizontal = 16.dp, vertical = 14.dp)
-                ) {
-                    if (modelName.isEmpty()) {
-                        Text(
-                            text = "例如: gpt-4-vision",
-                            color = colors.textHint,
-                            fontSize = 14.sp
-                        )
-                    }
-                    BasicTextField(
-                        value = modelName,
-                        onValueChange = { modelName = it },
-                        textStyle = TextStyle(
-                            color = colors.textPrimary,
-                            fontSize = 14.sp
-                        ),
-                        cursorBrush = SolidColor(colors.primary),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { if (modelName.isNotBlank()) onConfirm(modelName.trim()) },
-                enabled = modelName.isNotBlank()
-            ) {
-                Text("添加", color = if (modelName.isNotBlank()) colors.primary else colors.textHint)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消", color = colors.textSecondary)
             }
         }
     )

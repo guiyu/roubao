@@ -1,6 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 android {
@@ -11,8 +13,8 @@ android {
         applicationId = "com.roubao.autopilot"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -41,6 +43,7 @@ android {
     buildFeatures {
         compose = true
         aidl = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -61,6 +64,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.1")
 
+    // Security (Encrypted SharedPreferences)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // Compose
     implementation(platform("androidx.compose:compose-bom:2023.10.01"))
     implementation("androidx.compose.ui:ui")
@@ -80,6 +86,11 @@ dependencies {
 
     // JSON
     implementation("org.json:json:20231013")
+
+    // Firebase Crashlytics
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-analytics")
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")

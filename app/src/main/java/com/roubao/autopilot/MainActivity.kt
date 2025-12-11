@@ -263,12 +263,24 @@ class MainActivity : ComponentActivity() {
                                 onUpdateApiKey = { settingsManager.updateApiKey(it) },
                                 onUpdateBaseUrl = { settingsManager.updateBaseUrl(it) },
                                 onUpdateModel = { settingsManager.updateModel(it) },
-                                onAddCustomModel = { settingsManager.addCustomModel(it) },
-                                onRemoveCustomModel = { settingsManager.removeCustomModel(it) },
+                                onUpdateCachedModels = { settingsManager.updateCachedModels(it) },
                                 onUpdateThemeMode = { settingsManager.updateThemeMode(it) },
                                 onUpdateMaxSteps = { settingsManager.updateMaxSteps(it) },
-                                allModels = settingsManager.getAllModels(),
-                                shizukuAvailable = isShizukuAvailable
+                                onUpdateCloudCrashReport = { enabled ->
+                                    settingsManager.updateCloudCrashReportEnabled(enabled)
+                                    App.getInstance().updateCloudCrashReportEnabled(enabled)
+                                },
+                                shizukuAvailable = isShizukuAvailable,
+                                onFetchModels = { onSuccess, onError ->
+                                    lifecycleScope.launch {
+                                        val result = VLMClient.fetchModels(settings.baseUrl, settings.apiKey)
+                                        result.onSuccess { models ->
+                                            onSuccess(models)
+                                        }.onFailure { error ->
+                                            onError(error.message ?: "未知错误")
+                                        }
+                                    }
+                                }
                             )
                         }
                     }
