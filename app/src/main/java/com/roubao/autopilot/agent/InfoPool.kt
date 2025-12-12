@@ -41,7 +41,10 @@ data class InfoPool(
     var additionalKnowledge: String = "",
 
     // Skill 上下文（从 SkillManager 获取的相关技能信息）
-    var skillContext: String = ""
+    var skillContext: String = "",
+
+    // 对话记忆（保存完整对话历史，用于 Executor）
+    var executorMemory: ConversationMemory? = null
 )
 
 /**
@@ -56,7 +59,8 @@ data class Action(
     val text: String? = null,
     val button: String? = null,  // Back, Home, Enter
     val duration: Int? = null,   // wait 动作的等待时长（秒）
-    val message: String? = null  // take_over 动作的提示消息
+    val message: String? = null, // take_over 动作的提示消息，或敏感操作确认消息
+    val needConfirm: Boolean = false  // 敏感操作需要用户确认
 ) {
     companion object {
         fun fromJson(json: String): Action? {
@@ -77,7 +81,8 @@ data class Action(
                     text = obj.optString("text", null),
                     button = obj.optString("button", null),
                     duration = if (obj.has("duration")) obj.optInt("duration", 3) else null,
-                    message = obj.optString("message", null)
+                    message = obj.optString("message", null),
+                    needConfirm = obj.optBoolean("need_confirm", false)
                 )
             } catch (e: Exception) {
                 null
@@ -105,6 +110,7 @@ data class Action(
         button?.let { obj.put("button", it) }
         duration?.let { obj.put("duration", it) }
         message?.let { obj.put("message", it) }
+        if (needConfirm) obj.put("need_confirm", true)
 
         return obj.toString()
     }

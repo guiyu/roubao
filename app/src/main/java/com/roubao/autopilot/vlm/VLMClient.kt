@@ -183,6 +183,73 @@ class VLMClient(
     }
 
     /**
+     * 调用 VLM 进行多模态推理 (使用完整对话历史)
+     * @param messagesJson OpenAI 兼容的 messages JSON 数组
+     */
+    suspend fun predictWithContext(
+        messagesJson: JSONArray
+    ): Result<String> = withContext(Dispatchers.IO) {
+        var lastException: Exception? = null
+
+        for (attempt in 1..MAX_RETRIES) {
+            try {
+                val requestBody = JSONObject().apply {
+                    put("model", model)
+                    put("messages", messagesJson)
+                    put("max_tokens", 4096)
+                    put("temperature", 0.0)
+                }
+
+                val request = Request.Builder()
+                    .url("$baseUrl/chat/completions")
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .addHeader("Content-Type", "application/json")
+                    .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+
+                if (response.isSuccessful) {
+                    val json = JSONObject(responseBody)
+                    val choices = json.getJSONArray("choices")
+                    if (choices.length() > 0) {
+                        val message = choices.getJSONObject(0).getJSONObject("message")
+                        val responseContent = message.getString("content")
+                        return@withContext Result.success(responseContent)
+                    } else {
+                        lastException = Exception("No response from model")
+                    }
+                } else {
+                    lastException = Exception("API error: ${response.code} - $responseBody")
+                }
+            } catch (e: UnknownHostException) {
+                println("[VLMClient] DNS 解析失败，重试 $attempt/$MAX_RETRIES...")
+                lastException = e
+                if (attempt < MAX_RETRIES) {
+                    delay(RETRY_DELAY_MS * attempt)
+                }
+            } catch (e: java.net.SocketTimeoutException) {
+                println("[VLMClient] 请求超时，重试 $attempt/$MAX_RETRIES...")
+                lastException = e
+                if (attempt < MAX_RETRIES) {
+                    delay(RETRY_DELAY_MS * attempt)
+                }
+            } catch (e: java.io.IOException) {
+                println("[VLMClient] IO 错误: ${e.message}，重试 $attempt/$MAX_RETRIES...")
+                lastException = e
+                if (attempt < MAX_RETRIES) {
+                    delay(RETRY_DELAY_MS * attempt)
+                }
+            } catch (e: Exception) {
+                return@withContext Result.failure(e)
+            }
+        }
+
+        Result.failure(lastException ?: Exception("Unknown error"))
+    }
+
+    /**
      * Bitmap 转 Base64 URL (只压缩质量，不压缩分辨率)
      * 保持原始分辨率以确保坐标准确
      */

@@ -75,6 +75,15 @@ class MobileAgent(
 
         val infoPool = InfoPool(instruction = instruction)
 
+        // 初始化 Executor 的对话记忆
+        val executorSystemPrompt = buildString {
+            append("You are an agent who can operate an Android phone. ")
+            append("Decide the next action based on the current state.\n\n")
+            append("User Request: $instruction\n")
+        }
+        infoPool.executorMemory = ConversationMemory.withSystemPrompt(executorSystemPrompt)
+        log("已初始化对话记忆")
+
         // 如果有 Skill 上下文，添加到 InfoPool，让 Manager 知道可用的工具
         if (!skillContext.isNullOrEmpty() && skillContext != "未找到相关技能或可用应用，请使用通用 GUI 自动化完成任务。") {
             infoPool.skillContext = skillContext
@@ -122,12 +131,25 @@ class MobileAgent(
                 log("截图中...")
                 OverlayService.setVisible(false)
                 delay(100) // 等待悬浮窗隐藏
-                val screenshot = controller.screenshot()
+                val screenshotResult = controller.screenshotWithFallback()
                 OverlayService.setVisible(true)
-                if (screenshot == null) {
-                    log("截图失败")
-                    delay(1000)
-                    continue
+                val screenshot = screenshotResult.bitmap
+
+                // 处理敏感页面（截图被系统阻止）
+                if (screenshotResult.isSensitive) {
+                    log("⚠️ 检测到敏感页面（截图被阻止），请求人工接管")
+                    val confirmed = withContext(Dispatchers.Main) {
+                        waitForUserConfirm("检测到敏感页面，是否继续执行？")
+                    }
+                    if (!confirmed) {
+                        log("用户取消，任务终止")
+                        OverlayService.hide(context)
+                        bringAppToFront()
+                        return AgentResult(success = false, message = "敏感页面，用户取消")
+                    }
+                    log("用户确认继续（使用黑屏占位图）")
+                } else if (screenshotResult.isFallback) {
+                    log("⚠️ 截图失败，使用黑屏占位图继续")
                 }
 
                 // 再次检查停止状态（截图后）
@@ -203,7 +225,7 @@ class MobileAgent(
                     }
                 }
 
-                // 5. Executor 决定动作
+                // 5. Executor 决定动作 (使用上下文记忆)
                 log("Executor 决策中...")
 
                 // 检查停止状态
@@ -215,7 +237,25 @@ class MobileAgent(
                 }
 
                 val actionPrompt = executor.getPrompt(infoPool)
-                val actionResponse = vlmClient.predict(actionPrompt, listOf(screenshot))
+
+                // 使用上下文记忆调用 VLM
+                val memory = infoPool.executorMemory
+                val actionResponse = if (memory != null) {
+                    // 添加用户消息（带截图）
+                    memory.addUserMessage(actionPrompt, screenshot)
+                    log("记忆消息数: ${memory.size()}, 估算 token: ${memory.estimateTokens()}")
+
+                    // 调用 VLM
+                    val response = vlmClient.predictWithContext(memory.toMessagesJson())
+
+                    // 删除图片节省 token
+                    memory.stripLastUserImage()
+
+                    response
+                } else {
+                    // 降级：使用普通方式
+                    vlmClient.predict(actionPrompt, listOf(screenshot))
+                }
 
                 // VLM 调用后检查停止状态
                 if (!_state.value.isRunning) {
@@ -230,7 +270,11 @@ class MobileAgent(
                     continue
                 }
 
-                val executorResult = executor.parseResponse(actionResponse.getOrThrow())
+                val responseText = actionResponse.getOrThrow()
+                val executorResult = executor.parseResponse(responseText)
+
+                // 将助手响应添加到记忆
+                memory?.addAssistantMessage(responseText)
                 val action = executorResult.action
 
                 log("思考: ${executorResult.thought.take(80)}...")
@@ -260,7 +304,27 @@ class MobileAgent(
                     return AgentResult(success = true, message = "回答: ${action.text}")
                 }
 
-                // 6. 执行动作
+                // 6. 敏感操作确认
+                if (action.needConfirm || action.message != null && action.type in listOf("click", "double_tap", "long_press")) {
+                    val confirmMessage = action.message ?: "确认执行此操作？"
+                    log("⚠️ 敏感操作: $confirmMessage")
+
+                    val confirmed = withContext(Dispatchers.Main) {
+                        waitForUserConfirm(confirmMessage)
+                    }
+
+                    if (!confirmed) {
+                        log("❌ 用户取消操作")
+                        infoPool.actionHistory.add(action)
+                        infoPool.summaryHistory.add("用户取消: ${executorResult.description}")
+                        infoPool.actionOutcomes.add("C")
+                        infoPool.errorDescriptions.add("User cancelled")
+                        continue
+                    }
+                    log("✅ 用户确认，继续执行")
+                }
+
+                // 7. 执行动作
                 log("执行动作: ${action.type}")
                 OverlayService.update("${action.type}: ${executorResult.description.take(15)}...")
                 executeAction(action, infoPool)
@@ -289,17 +353,17 @@ class MobileAgent(
                     return AgentResult(success = false, message = "用户停止")
                 }
 
-                // 7. 截图 (动作后，隐藏悬浮窗)
+                // 8. 截图 (动作后，隐藏悬浮窗)
                 OverlayService.setVisible(false)
                 delay(100)
-                val afterScreenshot = controller.screenshot()
+                val afterScreenshotResult = controller.screenshotWithFallback()
                 OverlayService.setVisible(true)
-                if (afterScreenshot == null) {
-                    log("动作后截图失败")
-                    continue
+                val afterScreenshot = afterScreenshotResult.bitmap
+                if (afterScreenshotResult.isFallback) {
+                    log("动作后截图失败，使用黑屏占位图")
                 }
 
-                // 8. Reflector 反思
+                // 9. Reflector 反思
                 log("Reflector 反思中...")
 
                 // 检查停止状态
@@ -339,7 +403,7 @@ class MobileAgent(
                     copy(executionSteps = updatedSteps)
                 }
 
-                // 9. Notetaker (可选)
+                // 10. Notetaker (可选)
                 if (useNotetaker && reflectResult.outcome == "A" && action.type != "answer") {
                     log("Notetaker 记录中...")
 
@@ -455,6 +519,19 @@ class MobileAgent(
         com.roubao.autopilot.ui.OverlayService.showTakeOver(message) {
             if (continuation.isActive) {
                 continuation.resume(Unit) {}
+            }
+        }
+    }
+
+    /**
+     * 等待用户确认敏感操作
+     * @return true = 用户确认，false = 用户取消
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private suspend fun waitForUserConfirm(message: String) = suspendCancellableCoroutine<Boolean> { continuation ->
+        com.roubao.autopilot.ui.OverlayService.showConfirm(message) { confirmed ->
+            if (continuation.isActive) {
+                continuation.resume(confirmed) {}
             }
         }
     }

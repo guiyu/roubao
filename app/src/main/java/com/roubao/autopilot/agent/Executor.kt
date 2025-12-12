@@ -66,6 +66,12 @@ Text Related:
         append("- answer(text): Answer user's question. Example: {\"action\": \"answer\", \"text\": \"The answer is...\"}\n")
         append("\n")
 
+        append("#### Sensitive Operations ####\n")
+        append("For payment, password, or privacy-related actions, add 'message' field to request user confirmation:\n")
+        append("Example: {\"action\": \"click\", \"coordinate\": [500, 800], \"message\": \"确认支付 ¥100\"}\n")
+        append("The user will see a confirmation dialog and can choose to confirm or cancel.\n")
+        append("\n")
+
         append("### Latest Action History ###\n")
         if (infoPool.actionHistory.isNotEmpty()) {
             val numActions = minOf(5, infoPool.actionHistory.size)

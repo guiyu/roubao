@@ -33,18 +33,23 @@ class OverlayService : Service() {
     private var overlayView: View? = null
     private var textView: TextView? = null
     private var actionButton: TextView? = null
+    private var cancelButton: TextView? = null  // 确认模式下的取消按钮
     private var divider: View? = null
+    private var divider2: View? = null  // 确认模式下第二个分隔线
     private var animator: ValueAnimator? = null
 
     companion object {
         private var instance: OverlayService? = null
         private var stopCallback: (() -> Unit)? = null
         private var continueCallback: (() -> Unit)? = null
+        private var confirmCallback: ((Boolean) -> Unit)? = null  // 敏感操作确认回调
         private var isTakeOverMode = false
+        private var isConfirmMode = false  // 敏感操作确认模式
 
         fun show(context: Context, text: String, onStop: (() -> Unit)? = null) {
             stopCallback = onStop
             isTakeOverMode = false
+            isConfirmMode = false
             instance?.updateText(text) ?: run {
                 val intent = Intent(context, OverlayService::class.java).apply {
                     putExtra("text", text)
@@ -57,7 +62,9 @@ class OverlayService : Service() {
         fun hide(context: Context) {
             stopCallback = null
             continueCallback = null
+            confirmCallback = null
             isTakeOverMode = false
+            isConfirmMode = false
             context.stopService(Intent(context, OverlayService::class.java))
         }
 
@@ -76,7 +83,16 @@ class OverlayService : Service() {
         fun showTakeOver(message: String, onContinue: () -> Unit) {
             continueCallback = onContinue
             isTakeOverMode = true
+            isConfirmMode = false
             instance?.setTakeOverMode(message)
+        }
+
+        /** 显示敏感操作确认模式 - 用户确认或取消 */
+        fun showConfirm(message: String, onConfirm: (Boolean) -> Unit) {
+            confirmCallback = onConfirm
+            isConfirmMode = true
+            isTakeOverMode = false
+            instance?.setConfirmMode(message)
         }
     }
 
@@ -178,7 +194,7 @@ class OverlayService : Service() {
         }
         container.addView(divider, dividerParams)
 
-        // 动作按钮（停止/继续）
+        // 动作按钮（停止/继续/确认）
         actionButton = TextView(this).apply {
             text = "⏹ 停止"
             textSize = 13f
@@ -188,20 +204,62 @@ class OverlayService : Service() {
             setShadowLayer(4f, 0f, 0f, Color.BLACK)
             typeface = Typeface.DEFAULT_BOLD
             setOnClickListener {
-                if (isTakeOverMode) {
-                    // 人机协作模式：点击继续
-                    continueCallback?.invoke()
-                    continueCallback = null
-                    isTakeOverMode = false
-                    setNormalMode()
-                } else {
-                    // 正常模式：点击停止
-                    stopCallback?.invoke()
-                    hide(this@OverlayService)
+                when {
+                    isConfirmMode -> {
+                        // 确认模式：点击确认
+                        confirmCallback?.invoke(true)
+                        confirmCallback = null
+                        isConfirmMode = false
+                        setNormalMode()
+                    }
+                    isTakeOverMode -> {
+                        // 人机协作模式：点击继续
+                        continueCallback?.invoke()
+                        continueCallback = null
+                        isTakeOverMode = false
+                        setNormalMode()
+                    }
+                    else -> {
+                        // 正常模式：点击停止
+                        stopCallback?.invoke()
+                        hide(this@OverlayService)
+                    }
                 }
             }
         }
         container.addView(actionButton)
+
+        // 第二个分隔线（确认模式用）
+        divider2 = View(this).apply {
+            setBackgroundColor(Color.WHITE)
+            alpha = 0.5f
+            visibility = View.GONE
+        }
+        val divider2Params = LinearLayout.LayoutParams(2, 36).apply {
+            setMargins(12, 0, 12, 0)
+        }
+        container.addView(divider2, divider2Params)
+
+        // 取消按钮（确认模式用）
+        cancelButton = TextView(this).apply {
+            text = "❌ 取消"
+            textSize = 13f
+            setTextColor(Color.parseColor("#FF6B6B"))  // 红色
+            gravity = Gravity.CENTER
+            setPadding(16, 4, 16, 4)
+            setShadowLayer(4f, 0f, 0f, Color.BLACK)
+            typeface = Typeface.DEFAULT_BOLD
+            visibility = View.GONE
+            setOnClickListener {
+                if (isConfirmMode) {
+                    confirmCallback?.invoke(false)
+                    confirmCallback = null
+                    isConfirmMode = false
+                    setNormalMode()
+                }
+            }
+        }
+        container.addView(cancelButton)
 
         // 动画：七彩渐变流动效果
         startRainbowAnimation(gradientDrawable)
@@ -353,6 +411,21 @@ class OverlayService : Service() {
         overlayView?.post {
             actionButton?.text = "⏹ 停止"
             actionButton?.setTextColor(Color.WHITE)
+            // 隐藏取消按钮和第二分隔线
+            divider2?.visibility = View.GONE
+            cancelButton?.visibility = View.GONE
+        }
+    }
+
+    /** 切换到敏感操作确认模式 */
+    private fun setConfirmMode(message: String) {
+        overlayView?.post {
+            textView?.text = "⚠️ $message"
+            actionButton?.text = "✅ 确认"
+            actionButton?.setTextColor(Color.parseColor("#90EE90"))  // 浅绿色
+            // 显示取消按钮和第二分隔线
+            divider2?.visibility = View.VISIBLE
+            cancelButton?.visibility = View.VISIBLE
         }
     }
 }
