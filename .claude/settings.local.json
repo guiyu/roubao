@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew tasks:*)",
+      "Bash(dos2unix:*)",
+      "Bash(chmod:*)"
+    ]
+  }
+}
